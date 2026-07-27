@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UTC | Iniciar sesión</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-brand-panel">
+      <div class="login-brand-mark">UTC</div>
+      <h1>Control de Incidencias Docentes</h1>
+      <p>Registro, seguimiento y análisis de incidencias operativas y administrativas.</p>
+    </section>
+    <section class="login-card">
+      <div>
+        <span class="login-eyebrow">Acceso al sistema</span>
+        <h2>Iniciar sesión</h2>
+        <p class="help">Ingresa con el usuario asignado por el administrador.</p>
+      </div>
+      <form id="loginForm">
+        <div class="field">
+          <label for="loginUser">Usuario</label>
+          <input id="loginUser" autocomplete="username" required placeholder="Ej. administrador">
+        </div>
+        <div class="field">
+          <label for="loginPassword">Contraseña</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Tu contraseña">
+        </div>
+        <p id="loginError" class="login-error" hidden></p>
+        <button class="btn btn-primary login-submit" type="submit">Entrar</button>
+      </form>
+      <p class="login-note">Las credenciales locales de prueba están en <code>config.js</code>. Cuando se active Supabase, las contraseñas ya no se guardarán en GitHub.</p>
+    </section>
+  </main>
+  <script>
+    const existingSession = localStorage.getItem('utc_docentes_session');
+    if (existingSession) window.location.replace('index.html');
+    document.getElementById('loginForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const username = document.getElementById('loginUser').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const error = document.getElementById('loginError');
+      const account = (window.APP_CONFIG?.LOCAL_USERS || []).find(item =>
+        item.username.toLowerCase() === username.toLowerCase() && item.password === password
+      );
+      if (!account) {
+        error.hidden = false;
+        error.textContent = 'Usuario o contraseña incorrectos.';
+        return;
+      }
+      localStorage.setItem('utc_docentes_session', JSON.stringify({
+        username: account.username, name: account.name, role: account.role, initials: account.initials
+      }));
+      window.location.href = 'index.html';
+    });
+  </script>
+</body>
+</html>

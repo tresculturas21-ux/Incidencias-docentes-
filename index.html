@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UTC | Incidencias de Profesores</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">UTC</div>
+        <div>
+          <h1>Control de Incidencias</h1>
+          <p>Profesores y grupos</p>
+        </div>
+      </div>
+
+      <div class="nav-title">Principal</div>
+      <button class="nav-button active" data-section="dashboard"><span class="icon">▦</span> Dashboard</button>
+      <button class="nav-button" data-section="registro"><span class="icon">＋</span> Registrar incidencia</button>
+      <button class="nav-button" data-section="incidencias"><span class="icon">☷</span> Incidencias</button>
+      <button class="nav-button" data-section="seguimiento"><span class="icon">✓</span> Seguimiento</button>
+      <button class="nav-button" data-section="graficas"><span class="icon">◔</span> Gráficas</button>
+
+      <div class="nav-title">Catálogos</div>
+      <button class="nav-button" data-section="profesores"><span class="icon">♟</span> Profesores</button>
+      <button class="nav-button" data-section="alumnos"><span class="icon">♙</span> Alumnos</button>
+      <button class="nav-button" data-section="materias"><span class="icon">▤</span> Materias y grupos</button>
+
+      <div class="nav-title">Sistema</div>
+      <button class="nav-button admin-only" data-section="reportes"><span class="icon">⇩</span> Reportes</button>
+      <button class="nav-button" data-section="usuarios"><span class="icon">⚙</span> Usuarios</button>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="pageTitle">Dashboard</h2>
+          <small id="currentDate"></small>
+        </div>
+        <div class="user-box">
+          <div>
+            <strong id="currentUserName">Usuario</strong><br>
+            <small id="currentUserRole">Sesión activa · Plantel UTC</small>
+          </div>
+          <div class="avatar" id="currentUserAvatar">US</div><button class="btn btn-secondary btn-sm" id="logoutButton" type="button">Cerrar sesión</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section id="dashboard" class="section active">
+          <div class="hero">
+            <div>
+              <h3>Control de incidencias académicas</h3>
+              <p>Consulta registros, detecta profesores con tres o más incidencias en el mes y da seguimiento a cada caso desde un mismo lugar.</p>
+            </div>
+            <div class="hero-badge">
+              <span>Mes actual</span>
+              <strong id="heroMonthTotal">7</strong>
+              <small>incidencias registradas</small>
+            </div>
+          </div>
+
+          <div class="cards">
+            <div class="card metric">
+              <div class="metric-icon">☷</div>
+              <span>Incidencias del mes</span>
+              <strong id="metricMonth">7</strong>
+              <small>Registros acumulados</small>
+            </div>
+            <div class="card metric">
+              <div class="metric-icon">!</div>
+              <span>Profesores en alerta</span>
+              <strong id="metricAlerts">1</strong>
+              <small>3 o más incidencias</small>
+            </div>
+            <div class="card metric">
+              <div class="metric-icon">⌛</div>
+              <span>Seguimientos pendientes</span>
+              <strong id="metricPending">4</strong>
+              <small>Casos por atender</small>
+            </div>
+            <div class="card metric">
+              <div class="metric-icon">✓</div>
+              <span>Casos resueltos</span>
+              <strong id="metricResolved">3</strong>
+              <small>Durante el mes</small>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title">
+                <div><h3>Incidencias recientes</h3><p>Últimos registros capturados</p></div>
+                <button class="btn btn-secondary btn-sm" onclick="showSection('incidencias')">Ver todas</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Fecha</th><th>Profesor</th><th>Grupo</th><th>Incidencia</th><th>Estatus</th></tr></thead>
+                  <tbody id="dashboardTable"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card">
+              <div class="section-title"><div><h3>Alertas del mes</h3><p>Profesores con mayor acumulación</p></div></div>
+              <div id="alertsContainer"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="registro" class="section">
+          <div class="card">
+            <div class="section-title">
+              <div><h3>Nueva incidencia</h3><p>Captura la información del evento observado.</p></div>
+              <span class="badge info">Formulario de prueba</span>
+            </div>
+            <form id="incidentForm">
+              <div class="form-grid three">
+                <div class="field"><label>Fecha *</label><input id="fecha" type="date" required></div>
+                <div class="field"><label>Hora *</label><input id="hora" type="time" required></div>
+                <div class="field"><label>Aula</label><input id="aula" placeholder="Ej. 204"></div>
+                <div class="field"><label>ID Banner *</label><input id="profesorId" placeholder="Se completa al seleccionar profesor" required></div>
+                <div class="field"><label>Profesor *</label><input id="profesor" list="profesoresList" placeholder="Selecciona o escribe" required></div>
+                <div class="field"><label>Materia *</label><input id="materia" placeholder="Ej. Matemáticas" required></div>
+                <div class="field"><label>Grupo *</label><input id="grupo" placeholder="Ej. 301-A" required></div>
+                <div class="field"><label>Categoría de incidencia *</label>
+                  <select id="categoria" required>
+                    <option value="">Selecciona una categoría</option>
+                    <option value="Operativa">Incidencia operativa</option>
+                    <option value="Administrativa">Incidencia administrativa</option>
+                  </select>
+                </div>
+                <div class="field"><label>Tipo de incidencia *</label>
+                  <select id="tipo" required disabled>
+                    <option value="">Primero selecciona una categoría</option>
+                  </select>
+                </div>
+                <div class="field"><label>Persona involucrada *</label>
+                  <select id="involucrado" required>
+                    <option value="">Selecciona</option><option>Profesor</option><option>Alumno</option><option>Ambos</option>
+                  </select>
+                </div>
+                <div class="field"><label>Matrícula del alumno</label><input id="matricula" placeholder="Opcional"></div>
+                <div class="field"><label>Nombre del alumno</label><input id="alumno" placeholder="Opcional"></div>
+                <div class="field full"><label>Descripción u observaciones *</label><textarea id="descripcion" placeholder="Describe de manera clara lo ocurrido..." required></textarea></div>
+              </div>
+              <div class="form-actions">
+                <button type="reset" class="btn btn-secondary">Limpiar</button>
+                <button type="submit" class="btn btn-primary">Guardar incidencia</button>
+              </div>
+            </form>
+          </div>
+          <datalist id="profesoresList"></datalist>
+        </section>
+
+        <section id="incidencias" class="section">
+          <div class="card">
+            <div class="section-title">
+              <div><h3>Registro de incidencias</h3><p>Los profesores con tres o más incidencias en el mes aparecen en rojo.</p></div>
+              <button class="btn btn-primary" onclick="showSection('registro')">＋ Nueva incidencia</button>
+            </div>
+            <div class="filters">
+              <input id="filterTeacher" placeholder="Buscar profesor">
+              <input id="filterGroup" placeholder="Buscar grupo">
+              <select id="filterCategory"><option value="">Ambas categorías</option><option value="Operativa">Operativas</option><option value="Administrativa">Administrativas</option></select>
+              <select id="filterType"><option value="">Todas las incidencias</option></select>
+              <select id="filterStatus"><option value="">Todos los estatus</option><option>Pendiente</option><option>Resuelta</option></select>
+              <input id="filterDate" type="month">
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Fecha</th><th>Hora</th><th>Profesor</th><th>Materia</th><th>Grupo</th><th>Alumno / matrícula</th><th>Categoría</th><th>Incidencia</th><th>Estatus</th><th>Acciones</th></tr></thead>
+                <tbody id="incidentsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="seguimiento" class="section">
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title"><div><h3>Casos pendientes</h3><p>Selecciona una incidencia para registrar seguimiento.</p></div></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Fecha</th><th>Profesor</th><th>Incidencia</th><th>Acción</th></tr></thead>
+                  <tbody id="pendingTable"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="card">
+              <div class="section-title"><div><h3>Resumen de seguimiento</h3><p>Estado actual de los casos</p></div></div>
+              <div class="summary-list">
+                <div class="summary-item"><span>Pendientes</span><strong id="sumPending">0</strong></div>
+                <div class="summary-item"><span>Resueltos</span><strong id="sumResolved">0</strong></div>
+                <div class="summary-item"><span>Incidencias administrativas</span><strong id="sumAdministrative">0</strong></div>
+                <div class="summary-item"><span>Total del mes</span><strong id="sumTotal">0</strong></div>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px">
+            <div class="section-title"><div><h3>Bitácora de seguimientos</h3><p>Historial de acciones registradas</p></div></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Fecha</th><th>Profesor</th><th>Resultado</th><th>Comentario</th><th>Usuario</th></tr></thead>
+                <tbody id="followTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="graficas" class="section">
+          <div class="cards">
+            <div class="card metric"><span>Tipo más frecuente</span><strong style="font-size:18px" id="topType">Uso del celular</strong></div>
+            <div class="card metric"><span>Grupo con más incidencias</span><strong style="font-size:18px" id="topGroup">301-A</strong></div>
+            <div class="card metric"><span>Profesor con más incidencias</span><strong style="font-size:18px" id="topTeacher">Carlos Hernández</strong></div>
+            <div class="card metric"><span>Porcentaje resuelto</span><strong style="font-size:18px" id="resolvedRate">43%</strong></div>
+          </div>
+          <div class="grid-equal">
+            <div class="card"><div class="section-title"><div><h3>Incidencias por tipo</h3></div></div><div class="chart-container"><canvas id="typeChart"></canvas></div></div>
+            <div class="card"><div class="section-title"><div><h3>Incidencias por profesor</h3></div></div><div class="chart-container"><canvas id="teacherChart"></canvas></div></div>
+            <div class="card"><div class="section-title"><div><h3>Seguimiento</h3></div></div><div class="chart-container"><canvas id="statusChart"></canvas></div></div>
+            <div class="card"><div class="section-title"><div><h3>Incidencias por grupo</h3></div></div><div class="chart-container"><canvas id="groupChart"></canvas></div></div>
+          </div>
+        </section>
+
+        <section id="profesores" class="section">
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title"><div><h3>Importar profesores</h3><p>Archivo Excel o CSV con ID y nombre.</p></div></div>
+              <label class="upload-zone">
+                <input id="teacherFile" type="file" accept=".csv,.xlsx,.xls">
+                <div class="upload-icon">⇧</div><h4>Subir base de profesores</h4><p>Columnas requeridas: ID del profesor y nombre.</p><span class="btn btn-secondary">Seleccionar archivo</span>
+              </label>
+              <div id="teacherUploadInfo" class="help" style="margin-top:12px"></div>
+            </div>
+            <div class="card">
+              <div class="section-title"><div><h3>Alta manual de profesor</h3><p>Agrega profesores individualmente.</p></div></div>
+              <form id="teacherForm">
+                <div class="field"><label>ID del profesor</label><input id="newTeacherId" required></div>
+                <div class="field" style="margin-top:12px"><label>Nombre completo</label><input id="newTeacherName" required></div>
+                <div class="form-actions"><button class="btn btn-primary">Agregar profesor</button></div>
+              </form>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px">
+            <div class="section-title"><div><h3>Base de profesores</h3><p>Registros disponibles para seleccionar en las incidencias.</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>ID</th><th>Profesor</th><th>Incidencias del mes</th><th>Estado</th></tr></thead><tbody id="teachersTable"></tbody></table></div>
+          </div>
+        </section>
+
+        <section id="alumnos" class="section">
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title"><div><h3>Importar alumnos</h3><p>Sube una base independiente para alumnos.</p></div></div>
+              <label class="upload-zone">
+                <input id="studentFile" type="file" accept=".csv,.xlsx,.xls">
+                <div class="upload-icon">⇧</div><h4>Subir base de alumnos</h4><p>Columnas sugeridas: matrícula, nombre, grupo, carrera y turno.</p><span class="btn btn-secondary">Seleccionar archivo</span>
+              </label>
+              <div id="studentUploadInfo" class="help" style="margin-top:12px"></div>
+            </div>
+            <div class="card">
+              <div class="section-title"><div><h3>Alta manual de alumno</h3><p>Agrega alumnos de manera individual.</p></div></div>
+              <form id="studentForm">
+                <div class="form-grid">
+                  <div class="field"><label>Matrícula</label><input id="newStudentMat" required></div>
+                  <div class="field"><label>Nombre</label><input id="newStudentName" required></div>
+                  <div class="field"><label>Grupo</label><input id="newStudentGroup" required></div>
+                  <div class="field"><label>Carrera</label><input id="newStudentCareer"></div>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary">Agregar alumno</button></div>
+              </form>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px">
+            <div class="section-title"><div><h3>Base de alumnos</h3><p>Disponible para búsquedas por matrícula y nombre.</p></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Matrícula</th><th>Nombre</th><th>Grupo</th><th>Carrera</th></tr></thead><tbody id="studentsTable"></tbody></table></div>
+          </div>
+        </section>
+
+        <section id="materias" class="section">
+          <div class="grid-2">
+            <div class="card">
+              <div class="section-title"><div><h3>Agregar materia y grupo</h3><p>Captura las asignaciones manualmente.</p></div></div>
+              <form id="subjectForm">
+                <div class="form-grid">
+                  <div class="field"><label>Materia</label><input id="subjectName" required></div>
+                  <div class="field"><label>Grupo</label><input id="subjectGroup" required></div>
+                  <div class="field"><label>ID profesor</label><input id="subjectTeacherId" required></div>
+                  <div class="field"><label>Horario</label><input id="subjectSchedule" placeholder="Ej. Lun 08:00-10:00"></div>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary">Guardar asignación</button></div>
+              </form>
+            </div>
+            <div class="card">
+              <div class="section-title"><div><h3>Información</h3><p>Funcionamiento previsto</p></div></div>
+              <div class="alert-box" style="background:var(--azul-claro);border-color:#b9d8ef;color:var(--azul)">
+                <div>ℹ</div><div><strong>Selección automática</strong>Al conectarlo a Supabase, al elegir un profesor podrán mostrarse sus materias, grupos y horarios correspondientes.</div>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px"><div class="section-title"><div><h3>Asignaciones registradas</h3></div></div><div class="table-wrap"><table><thead><tr><th>Materia</th><th>Grupo</th><th>Profesor</th><th>Horario</th></tr></thead><tbody id="subjectsTable"></tbody></table></div></div>
+        </section>
+
+        <section id="reportes" class="section admin-only">
+          <div class="card">
+            <div class="section-title"><div><h3>Generación de reportes</h3><p>Descarga la información mostrada en esta versión de prueba.</p></div></div>
+            <div class="cards" style="margin-bottom:0">
+              <button class="card btn" onclick="exportCSV()" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Reporte general CSV</strong><span class="help">Todas las incidencias registradas.</span></button>
+              <button class="card btn" onclick="fakeExport('Reporte mensual')" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Reporte mensual</strong><span class="help">Incidencias del mes actual.</span></button>
+              <button class="card btn" onclick="fakeExport('Profesores en alerta')" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Profesores en alerta</strong><span class="help">Profesores con 3 o más incidencias.</span></button>
+              <button class="card btn" onclick="fakeExport('Seguimientos pendientes')" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Seguimientos pendientes</strong><span class="help">Casos todavía no resueltos.</span></button>
+            </div>
+          </div>
+        </section>
+
+        <section id="usuarios" class="section">
+          <div class="card">
+            <div class="section-title"><div><h3>Usuarios y permisos</h3><p>La plataforma tendrá un administrador y tres usuarios operativos.</p></div></div>
+            <div class="field" style="max-width:430px;margin-bottom:18px"><label>Usuario activo para probar permisos</label><select id="userSelector"></select><span class="help">En Supabase esto se determinará automáticamente al iniciar sesión.</span></div>
+            <div class="grid-equal">
+              <div class="alert-box" style="background:#eef4ff;border-color:#c7d7fe;color:#253b80"><div>★</div><div><strong>Administrador</strong>Puede registrar, consultar, dar seguimiento, borrar incidencias y descargar reportes.</div></div>
+              <div class="alert-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534"><div>✓</div><div><strong>3 usuarios operativos</strong>Pueden registrar, consultar y dar seguimiento. No pueden borrar incidencias ni descargar archivos.</div></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="followModal">
+    <div class="modal">
+      <div class="modal-header"><h3>Registrar seguimiento</h3><button class="close" onclick="closeModal()">×</button></div>
+      <form id="followForm">
+        <input type="hidden" id="followIncidentId">
+        <div class="field"><label>Resultado</label><select id="followResult" required><option value="">Selecciona</option><option>Se dio seguimiento</option><option>No se dio seguimiento</option><option>Pendiente</option><option>Canalizada</option><option>Resuelta</option></select></div>
+        <div class="field" style="margin-top:12px"><label>Acción realizada</label><input id="followAction" placeholder="Ej. Se habló con el profesor"></div>
+        <div class="field" style="margin-top:12px"><label>Comentario</label><textarea id="followComment" required placeholder="Describe la respuesta, acuerdo o acción realizada..."></textarea></div>
+        <div class="field" style="margin-top:12px"><label>Próxima revisión</label><input id="followNext" type="date"></div>
+        <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary">Guardar seguimiento</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
