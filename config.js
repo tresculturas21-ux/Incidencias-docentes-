@@ -6,8 +6,8 @@
  * NUNCA pegues aquí la contraseña de tu cuenta ni la service_role key.
  */
 window.APP_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: "",
+  SUPABASE_URL: "https://ulhxoqvwwncbkfquveds.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_o1Mnk5DkGV3Np8dKuj3eXw_QoihK6zG",
 
   // Usuarios TEMPORALES para revisar el diseño antes de activar Supabase.
   // Cambia estas contraseñas antes de publicar o deja LOCAL_USERS vacío al activar el login real.
