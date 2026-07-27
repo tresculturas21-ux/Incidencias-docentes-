@@ -1,31 +1,15 @@
 const professors = [
-      { id: '100001', name: 'Carlos Hernández' },
-      { id: '100002', name: 'María López' },
-      { id: '100003', name: 'Jorge Ramírez' },
-      { id: '100004', name: 'Ana Torres' }
     ];
 
     const students = [
-      { matricula: '2026001', name: 'Luis Martínez', group: '301-A', career: 'Sistemas' },
-      { matricula: '2026002', name: 'Fernanda Ruiz', group: '301-A', career: 'Sistemas' },
-      { matricula: '2026003', name: 'Diego Sánchez', group: '202-B', career: 'Administración' }
     ];
 
     const subjects = [
-      { subject: 'Matemáticas', group: '301-A', teacherId: '100001', schedule: 'Lun 08:00-10:00' },
-      { subject: 'Programación', group: '301-A', teacherId: '100001', schedule: 'Mar 10:00-12:00' },
-      { subject: 'Inglés', group: '202-B', teacherId: '100002', schedule: 'Mié 09:00-11:00' }
+      
     ];
 
     let incidents = [
-      { id: 1, date: '2026-07-02', time: '08:20', teacherId: '100001', teacher: 'Carlos Hernández', subject: 'Matemáticas', group: '301-A', student: '', matricula: '', type: 'Profesor fuera del salón', involved: 'Profesor', category: 'Operativa', status: 'Pendiente', description: 'El grupo se encontraba sin profesor.' },
-      { id: 2, date: '2026-07-05', time: '10:15', teacherId: '100001', teacher: 'Carlos Hernández', subject: 'Programación', group: '301-A', student: 'Luis Martínez', matricula: '2026001', type: 'Profesor y/o alumnos en el celular', involved: 'Ambos', category: 'Operativa', status: 'Resuelta', description: 'Se observó uso de celular durante clase.' },
-      { id: 3, date: '2026-07-08', time: '12:05', teacherId: '100002', teacher: 'María López', subject: 'Inglés', group: '202-B', student: 'Diego Sánchez', matricula: '2026003', type: 'Alumnos dormidos', involved: 'Alumno', category: 'Operativa', status: 'Pendiente', description: 'Alumno dormido durante la clase.' },
-      { id: 4, date: '2026-07-11', time: '09:40', teacherId: '100001', teacher: 'Carlos Hernández', subject: 'Matemáticas', group: '301-A', student: '', matricula: '', type: 'Alumnos y/o profesor comiendo', involved: 'Ambos', category: 'Operativa', status: 'Pendiente', description: 'Se observó consumo de alimentos.' },
-      { id: 5, date: '2026-07-14', time: '11:30', teacherId: '100003', teacher: 'Jorge Ramírez', subject: 'Historia', group: '101-C', student: '', matricula: '', type: 'Alumnos fuera de clase', involved: 'Alumno', category: 'Operativa', status: 'Resuelta', description: 'Tres alumnos permanecían fuera del salón.' },
-      { id: 6, date: '2026-07-18', time: '13:00', teacherId: '100004', teacher: 'Ana Torres', subject: 'Ética', group: '401-A', student: '', matricula: '', type: 'Guardia de receso', involved: 'Profesor', category: 'Operativa', status: 'Resuelta', description: 'No se encontró al profesor en el área asignada.' },
-      { id: 7, date: '2026-07-21', time: '07:50', teacherId: '100002', teacher: 'María López', subject: 'Inglés', group: '202-B', student: 'Fernanda Ruiz', matricula: '2026002', type: 'Alumnos sin playera', involved: 'Alumno', category: 'Operativa', status: 'Pendiente', description: 'La alumna no portaba la playera institucional.' }
-    ];
+     ];
 
     let followUps = [
       { date: '2026-07-06', teacher: 'Carlos Hernández', result: 'Resuelta', comment: 'Se recordó el reglamento sobre uso de celular.', user: 'Administrador' },
