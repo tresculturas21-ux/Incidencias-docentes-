@@ -4,6 +4,6 @@
  * Nunca uses la service_role key en el navegador.
  */
 window.APP_CONFIG = {
-  SUPABASE_URL: "PEGA_AQUI_TU_PROJECT_URL",
-  SUPABASE_ANON_KEY: "PEGA_AQUI_TU_ANON_KEY"
+  SUPABASE_URL: "https://ulhxoqvwwncbkfquveds.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_o1Mnk5DkGV3Np8dKuj3eXw_QoihK6zG"
 };
