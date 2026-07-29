@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
 </head>
 <body>
@@ -117,7 +118,7 @@
           <div class="card">
             <div class="section-title">
               <div><h3>Nueva incidencia</h3><p>Captura la información del evento observado.</p></div>
-              <span class="badge info">Formulario de prueba</span>
+              <span class="badge info">Conectado a Supabase</span>
             </div>
             <form id="incidentForm">
               <div class="form-grid three">
@@ -321,7 +322,7 @@
         <section id="usuarios" class="section">
           <div class="card">
             <div class="section-title"><div><h3>Usuarios y permisos</h3><p>La plataforma tendrá un administrador y tres usuarios operativos.</p></div></div>
-            <div class="field" style="max-width:430px;margin-bottom:18px"><label>Usuario activo para probar permisos</label><select id="userSelector"></select><span class="help">En Supabase esto se determinará automáticamente al iniciar sesión.</span></div>
+            <div class="field" style="max-width:520px;margin-bottom:18px"><label>Sesión activa</label><input id="sessionInfo" readonly><span class="help">El usuario y el rol se obtienen al iniciar sesión.</span></div>
             <div class="grid-equal">
               <div class="alert-box" style="background:#eef4ff;border-color:#c7d7fe;color:#253b80"><div>★</div><div><strong>Administrador</strong>Puede registrar, consultar, dar seguimiento, borrar incidencias y descargar reportes.</div></div>
               <div class="alert-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534"><div>✓</div><div><strong>3 usuarios operativos</strong>Pueden registrar, consultar y dar seguimiento. No pueden borrar incidencias ni descargar archivos.</div></div>
