@@ -20,13 +20,13 @@
       <div>
         <span class="login-eyebrow">Acceso al sistema</span>
         <h2>Iniciar sesión</h2>
-        <p class="help">Ingresa con el usuario y la contraseña asignados.</p>
+        <p class="help">Ingresa con el correo o usuario asignado.</p>
       </div>
 
       <form id="loginForm">
         <div class="field">
-          <label for="loginUser">Usuario</label>
-          <input id="loginUser" autocomplete="username" required placeholder="Ej. administrador">
+          <label for="loginUser">Correo o usuario</label>
+          <input id="loginUser" autocomplete="username" required placeholder="Ej. operativo1 o correo@dominio.com">
         </div>
         <div class="field">
           <label for="loginPassword">Contraseña</label>
@@ -35,73 +35,73 @@
         <p id="loginError" class="login-error" hidden></p>
         <button id="loginButton" class="btn btn-primary login-submit" type="submit">Entrar</button>
       </form>
-      <p class="login-note">Las credenciales se validan directamente en Supabase.</p>
+
+      <p class="login-note">Las contraseñas se validan de forma segura mediante Supabase Authentication.</p>
     </section>
   </main>
 
   <script>
-    (() => {
-      const config = window.APP_CONFIG || {};
-      const errorBox = document.getElementById('loginError');
-      const button = document.getElementById('loginButton');
+    const config = window.APP_CONFIG || {};
+    const errorBox = document.getElementById('loginError');
+    const button = document.getElementById('loginButton');
 
-      if (localStorage.getItem('utc_docentes_session')) {
-        window.location.replace('index.html');
-        return;
-      }
+    if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY || !window.supabase) {
+      errorBox.hidden = false;
+      errorBox.textContent = 'Falta configurar Supabase en config.js.';
+      button.disabled = true;
+    } else {
+      const client = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+      });
 
-      if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY || config.SUPABASE_URL.includes('PEGA_AQUI')) {
-        errorBox.hidden = false;
-        errorBox.textContent = 'Falta configurar la URL y la clave pública de Supabase en config.js.';
-        button.disabled = true;
-        return;
-      }
-
-      const db = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+      client.auth.getSession().then(({ data }) => {
+        if (data.session) window.location.replace('index.html');
+      });
 
       document.getElementById('loginForm').addEventListener('submit', async (event) => {
         event.preventDefault();
         errorBox.hidden = true;
         button.disabled = true;
-        button.textContent = 'Validando...';
+        button.textContent = 'Ingresando...';
+
+        const enteredUser = document.getElementById('loginUser').value.trim();
+        const password = document.getElementById('loginPassword').value;
+        const domain = String(config.AUTH_EMAIL_DOMAIN || '').replace(/^@/, '');
+        const email = enteredUser.includes('@') ? enteredUser : `${enteredUser}@${domain}`;
 
         try {
-          const usuario = document.getElementById('loginUser').value.trim();
-          const contrasena = document.getElementById('loginPassword').value;
-
-          const { data, error } = await db.rpc('validar_acceso', {
-            p_usuario: usuario,
-            p_contrasena: contrasena
-          });
-
-          if (error) throw error;
-          const account = Array.isArray(data) ? data[0] : data;
-          if (!account || account.valido === false || account.activo === false) {
-            throw new Error('Usuario o contraseña incorrectos.');
+          if (!enteredUser.includes('@') && !domain) {
+            throw new Error('Escribe el correo completo del usuario.');
           }
 
-          const name = account.nombre || account.name || usuario;
-          const role = String(account.rol || account.role || 'operativo').toLowerCase();
-          const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase();
+          const { data, error } = await client.auth.signInWithPassword({ email, password });
+          if (error) throw error;
 
-          localStorage.setItem('utc_docentes_session', JSON.stringify({
-            id: account.id || null,
-            username: usuario,
-            name,
-            role,
-            initials
-          }));
+          const { data: profile, error: profileError } = await client
+            .from('perfiles')
+            .select('id,nombre,rol,activo')
+            .eq('id', data.user.id)
+            .single();
+
+          if (profileError) throw new Error('El usuario inició sesión, pero no tiene un perfil válido.');
+          if (profile.activo === false) {
+            await client.auth.signOut();
+            throw new Error('Este usuario está desactivado.');
+          }
+
           window.location.href = 'index.html';
         } catch (error) {
           console.error(error);
           errorBox.hidden = false;
-          errorBox.textContent = error.message || 'No fue posible iniciar sesión.';
+          errorBox.textContent = error.message === 'Invalid login credentials'
+            ? 'Usuario o contraseña incorrectos.'
+            : error.message;
         } finally {
           button.disabled = false;
           button.textContent = 'Entrar';
         }
       });
-    })();
+    }
   </script>
 </body>
 </html>
