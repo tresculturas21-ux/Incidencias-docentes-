@@ -300,7 +300,7 @@
             <div class="card">
               <div class="section-title"><div><h3>Información</h3><p>Funcionamiento previsto</p></div></div>
               <div class="alert-box" style="background:var(--azul-claro);border-color:#b9d8ef;color:var(--azul)">
-                <div>ℹ</div><div><strong>Selección automática</strong>Al conectarlo a Supabase, al elegir un profesor podrán mostrarse sus materias, grupos y horarios correspondientes.</div>
+                <div>ℹ</div><div><strong>Selección automática</strong>Al elegir un profesor se mostrarán sus materias, grupos y horarios registrados en Supabase.</div>
               </div>
             </div>
           </div>
@@ -309,7 +309,7 @@
 
         <section id="reportes" class="section admin-only">
           <div class="card">
-            <div class="section-title"><div><h3>Generación de reportes</h3><p>Descarga la información mostrada en esta versión de prueba.</p></div></div>
+            <div class="section-title"><div><h3>Generación de reportes</h3><p>Descarga la información registrada en Supabase.</p></div></div>
             <div class="cards" style="margin-bottom:0">
               <button class="card btn" onclick="exportCSV()" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Reporte general CSV</strong><span class="help">Todas las incidencias registradas.</span></button>
               <button class="card btn" onclick="fakeExport('Reporte mensual')" style="text-align:left;display:block"><strong style="display:block;color:var(--azul);font-size:18px">Reporte mensual</strong><span class="help">Incidencias del mes actual.</span></button>
@@ -322,7 +322,7 @@
         <section id="usuarios" class="section">
           <div class="card">
             <div class="section-title"><div><h3>Usuarios y permisos</h3><p>La plataforma tendrá un administrador y tres usuarios operativos.</p></div></div>
-            <div class="field" style="max-width:520px;margin-bottom:18px"><label>Sesión activa</label><input id="sessionInfo" readonly><span class="help">El usuario y el rol se obtienen al iniciar sesión.</span></div>
+            <div class="field" style="max-width:530px;margin-bottom:18px"><label>Sesión activa</label><input id="sessionInfo" readonly><span class="help">El usuario y los permisos se obtienen de Supabase Authentication y de la tabla perfiles.</span></div>
             <div class="grid-equal">
               <div class="alert-box" style="background:#eef4ff;border-color:#c7d7fe;color:#253b80"><div>★</div><div><strong>Administrador</strong>Puede registrar, consultar, dar seguimiento, borrar incidencias y descargar reportes.</div></div>
               <div class="alert-box" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534"><div>✓</div><div><strong>3 usuarios operativos</strong>Pueden registrar, consultar y dar seguimiento. No pueden borrar incidencias ni descargar archivos.</div></div>
