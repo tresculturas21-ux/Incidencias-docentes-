@@ -1,624 +1,797 @@
-(() => {
-  'use strict';
+'use strict';
 
-  const config = window.APP_CONFIG || {};
-  const session = JSON.parse(localStorage.getItem('utc_docentes_session') || 'null');
-  if (!session) {
+const config = window.APP_CONFIG || {};
+if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY || !window.supabase) {
+  alert('Falta configurar Supabase en config.js.');
+  window.location.replace('login.html');
+  throw new Error('Supabase no está configurado.');
+}
+
+const db = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
+let currentUser = null;
+let currentProfile = null;
+let professors = [];
+let students = [];
+let subjects = [];
+let assignments = [];
+let incidentTypes = [];
+let incidents = [];
+let followUps = [];
+let chartInstances = {};
+let realtimeChannel = null;
+let reloadTimer = null;
+
+const $ = (id) => document.getElementById(id);
+const isAdmin = () => ['admin', 'administrador'].includes(String(currentProfile?.rol || '').toLowerCase());
+const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
+const today = () => new Date().toISOString().slice(0, 10);
+const nowTime = () => new Date().toTimeString().slice(0, 5);
+
+const pageNames = {
+  dashboard: 'Dashboard',
+  registro: 'Registrar incidencia',
+  incidencias: 'Registro de incidencias',
+  seguimiento: 'Seguimiento',
+  graficas: 'Gráficas',
+  profesores: 'Profesores',
+  alumnos: 'Alumnos',
+  materias: 'Materias y grupos',
+  reportes: 'Reportes',
+  usuarios: 'Usuarios'
+};
+
+function normalizeStatus(value) {
+  const status = lower(value);
+  return status === 'resuelta' || status === 'cerrada' ? 'Resuelta' : 'Pendiente';
+}
+
+function normalizeCategory(value) {
+  const category = lower(value);
+  return category.startsWith('admin') ? 'Administrativa' : 'Operativa';
+}
+
+function initials(name) {
+  return clean(name).split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || 'US';
+}
+
+function showToast(message) {
+  const toast = $('toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function formatDate(date) {
+  if (!date) return '-';
+  return new Date(`${date}T00:00:00`).toLocaleDateString('es-MX');
+}
+
+function statusBadge(status) {
+  return normalizeStatus(status) === 'Resuelta'
+    ? '<span class="badge resolved">Resuelta</span>'
+    : '<span class="badge pending">Pendiente</span>';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+async function requireSession() {
+  const { data, error } = await db.auth.getSession();
+  if (error || !data.session) {
     window.location.replace('login.html');
-    return;
+    throw error || new Error('Sesión no encontrada.');
   }
 
-  if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY || config.SUPABASE_URL.includes('PEGA_AQUI')) {
-    alert('Falta configurar Supabase en config.js');
-    return;
+  currentUser = data.session.user;
+  const { data: profile, error: profileError } = await db
+    .from('perfiles')
+    .select('id,nombre,rol,activo')
+    .eq('id', currentUser.id)
+    .single();
+
+  if (profileError || !profile || profile.activo === false) {
+    await db.auth.signOut();
+    alert('Tu perfil no existe o está desactivado.');
+    window.location.replace('login.html');
+    throw profileError || new Error('Perfil no disponible.');
   }
 
-  const db = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
-  const currentUser = {
-    id: session.id || null,
-    username: session.username || '',
-    name: session.name || 'Usuario',
-    role: String(session.role || 'operativo').toLowerCase(),
-    initials: session.initials || 'US'
+  currentProfile = profile;
+}
+
+async function loadData({ silent = false } = {}) {
+  if (!silent) showToast('Actualizando información...');
+
+  const [
+    professorsResult,
+    studentsResult,
+    subjectsResult,
+    assignmentsResult,
+    typesResult,
+    incidentsResult,
+    followUpsResult
+  ] = await Promise.all([
+    db.from('profesores').select('*').order('nombre'),
+    db.from('alumnos').select('*').order('nombre'),
+    db.from('materias').select('*').order('nombre'),
+    db.from('asignaciones_docentes').select('*'),
+    db.from('tipos_incidencia').select('*').order('nombre'),
+    db.from('incidencias').select('*').order('created_at', { ascending: false }),
+    db.from('seguimientos').select('*').order('created_at', { ascending: false })
+  ]);
+
+  const errors = [professorsResult, studentsResult, subjectsResult, assignmentsResult, typesResult, incidentsResult, followUpsResult]
+    .map(result => result.error)
+    .filter(Boolean);
+  if (errors.length) {
+    console.error(errors);
+    throw new Error(errors[0].message);
+  }
+
+  professors = (professorsResult.data || []).map(row => ({
+    raw: row,
+    id: row.id,
+    bannerId: row.id_banner ?? row.banner_id ?? row.clave ?? row.id,
+    name: row.nombre ?? row.name ?? '',
+    active: row.activo !== false
+  })).filter(item => item.active);
+
+  students = (studentsResult.data || []).map(row => ({
+    raw: row,
+    id: row.id,
+    matricula: row.matricula ?? '',
+    name: row.nombre ?? row.name ?? '',
+    group: row.grupo ?? '',
+    career: row.carrera ?? '',
+    shift: row.turno ?? '',
+    active: row.activo !== false
+  })).filter(item => item.active);
+
+  subjects = (subjectsResult.data || []).map(row => ({
+    raw: row,
+    id: row.id,
+    name: row.nombre ?? row.materia ?? row.name ?? '',
+    active: row.activo !== false
+  })).filter(item => item.active);
+
+  assignments = (assignmentsResult.data || []).map(row => ({
+    raw: row,
+    id: row.id,
+    teacherId: row.profesor_id,
+    subjectId: row.materia_id,
+    group: row.grupo ?? '',
+    schedule: row.horario ?? ''
+  }));
+
+  incidentTypes = (typesResult.data || []).map(row => ({
+    raw: row,
+    id: row.id,
+    name: row.nombre ?? row.tipo ?? '',
+    category: normalizeCategory(row.categoria),
+    active: row.activo !== false
+  })).filter(item => item.active);
+
+  incidents = (incidentsResult.data || []).map(row => mapIncident(row));
+  followUps = (followUpsResult.data || []).map(row => mapFollowUp(row));
+
+  renderAll();
+}
+
+function mapIncident(row) {
+  const professor = professors.find(item => item.id === row.profesor_id);
+  const subject = subjects.find(item => item.id === row.materia_id);
+  const student = students.find(item => item.id === row.alumno_id);
+  const type = incidentTypes.find(item => item.id === row.tipo_incidencia_id);
+
+  return {
+    raw: row,
+    id: row.id,
+    date: row.fecha ?? String(row.created_at || '').slice(0, 10),
+    time: String(row.hora ?? '').slice(0, 5),
+    classroom: row.aula ?? '',
+    teacherId: professor?.bannerId ?? row.profesor_id ?? '',
+    professorDbId: row.profesor_id,
+    teacher: professor?.name ?? row.profesor_nombre ?? 'Profesor no disponible',
+    subjectId: row.materia_id,
+    subject: subject?.name ?? row.materia_capturada ?? '-',
+    group: row.grupo ?? '',
+    studentId: row.alumno_id,
+    student: student?.name ?? row.alumno_nombre ?? '',
+    matricula: student?.matricula ?? row.matricula_capturada ?? '',
+    typeId: row.tipo_incidencia_id,
+    type: type?.name ?? row.tipo_capturado ?? 'Incidencia',
+    category: type?.category ?? normalizeCategory(row.categoria),
+    involved: row.involucrado ?? row.persona_involucrada ?? '',
+    status: normalizeStatus(row.estado),
+    description: row.observaciones ?? row.descripcion ?? '',
+    registeredBy: row.registrado_por ?? row.usuario_id ?? null,
+    createdAt: row.created_at
+  };
+}
+
+function mapFollowUp(row) {
+  const incident = incidents.find(item => item.id === row.incidencia_id);
+  return {
+    raw: row,
+    id: row.id,
+    incidentId: row.incidencia_id,
+    date: String(row.fecha ?? row.created_at ?? '').slice(0, 10),
+    teacher: incident?.teacher ?? '-',
+    result: row.resultado ?? row.estado ?? '-',
+    action: row.accion_realizada ?? row.accion ?? '',
+    comment: row.comentario ?? row.observaciones ?? '',
+    nextReview: row.proxima_revision ?? '',
+    userId: row.registrado_por ?? row.usuario_id ?? null,
+    user: row.usuario_nombre ?? (row.registrado_por === currentProfile?.id ? currentProfile.nombre : 'Usuario del sistema')
+  };
+}
+
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
+  document.querySelectorAll('.nav-button').forEach(button => button.classList.toggle('active', button.dataset.section === id));
+  const section = $(id);
+  if (section) section.classList.add('active');
+  if ($('pageTitle')) $('pageTitle').textContent = pageNames[id] || id;
+  if (id === 'graficas') setTimeout(renderCharts, 60);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+window.showSection = showSection;
+
+function currentMonthIncidents() {
+  const month = today().slice(0, 7);
+  return incidents.filter(item => item.date?.startsWith(month));
+}
+
+function getTeacherCounts() {
+  return currentMonthIncidents().reduce((result, item) => {
+    result[item.teacher] = (result[item.teacher] || 0) + 1;
+    return result;
+  }, {});
+}
+
+function renderAll() {
+  const monthData = currentMonthIncidents();
+  const counts = getTeacherCounts();
+  const pending = monthData.filter(item => item.status === 'Pendiente');
+  const resolved = monthData.filter(item => item.status === 'Resuelta');
+  const alertTeachers = Object.entries(counts).filter(([, count]) => count >= 3);
+
+  $('heroMonthTotal').textContent = monthData.length;
+  $('metricMonth').textContent = monthData.length;
+  $('metricAlerts').textContent = alertTeachers.length;
+  $('metricPending').textContent = pending.length;
+  $('metricResolved').textContent = resolved.length;
+  $('sumPending').textContent = pending.length;
+  $('sumResolved').textContent = resolved.length;
+  $('sumAdministrative').textContent = monthData.filter(item => item.category === 'Administrativa').length;
+  $('sumTotal').textContent = monthData.length;
+
+  $('dashboardTable').innerHTML = incidents.slice(0, 5).map(item => `
+    <tr>
+      <td>${formatDate(item.date)}</td>
+      <td class="${counts[item.teacher] >= 3 ? 'teacher-alert' : ''}">${escapeHtml(item.teacher)}</td>
+      <td>${escapeHtml(item.group)}</td>
+      <td>${escapeHtml(item.type)}</td>
+      <td>${statusBadge(item.status)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">No hay incidencias registradas.</td></tr>';
+
+  $('alertsContainer').innerHTML = alertTeachers.length
+    ? alertTeachers.map(([teacher, count]) => `<div class="alert-box"><div>⚠</div><div><strong>${escapeHtml(teacher)}</strong>Ha acumulado ${count} incidencias durante el mes actual.</div></div>`).join('')
+    : '<p class="help">No hay profesores en nivel de alerta.</p>';
+
+  renderIncidents();
+  renderPending();
+  renderFollowUps();
+  renderProfessors();
+  renderStudents();
+  renderSubjects();
+  populateLists();
+  renderChartSummaries();
+}
+
+function renderIncidents() {
+  const teacher = lower($('filterTeacher').value);
+  const group = lower($('filterGroup').value);
+  const category = $('filterCategory').value;
+  const type = $('filterType').value;
+  const status = $('filterStatus').value;
+  const month = $('filterDate').value;
+  const counts = getTeacherCounts();
+
+  const data = incidents.filter(item =>
+    lower(item.teacher).includes(teacher) &&
+    lower(item.group).includes(group) &&
+    (!category || item.category === category) &&
+    (!type || item.type === type) &&
+    (!status || item.status === status) &&
+    (!month || item.date?.startsWith(month))
+  );
+
+  $('incidentsTable').innerHTML = data.map(item => `
+    <tr>
+      <td>${formatDate(item.date)}</td>
+      <td>${escapeHtml(item.time || '-')}</td>
+      <td class="${counts[item.teacher] >= 3 ? 'teacher-alert' : ''}">${escapeHtml(item.teacher)}${counts[item.teacher] >= 3 ? ' ⚠' : ''}</td>
+      <td>${escapeHtml(item.subject)}</td>
+      <td>${escapeHtml(item.group)}</td>
+      <td>${item.student ? `${escapeHtml(item.student)}<br><small>${escapeHtml(item.matricula)}</small>` : 'No aplica'}</td>
+      <td><span class="badge info">${escapeHtml(item.category)}</span></td>
+      <td title="${escapeHtml(item.description)}">${escapeHtml(item.type)}</td>
+      <td>${statusBadge(item.status)}</td>
+      <td><div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="openFollow('${item.id}')">Seguimiento</button>
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteIncident('${item.id}')">Borrar</button>` : ''}
+      </div></td>
+    </tr>`).join('') || '<tr><td colspan="10">No se encontraron resultados.</td></tr>';
+}
+
+function renderPending() {
+  $('pendingTable').innerHTML = incidents.filter(item => item.status === 'Pendiente').map(item => `
+    <tr>
+      <td>${formatDate(item.date)}</td>
+      <td>${escapeHtml(item.teacher)}</td>
+      <td>${escapeHtml(item.type)}</td>
+      <td><button class="btn btn-warning btn-sm" onclick="openFollow('${item.id}')">Atender</button></td>
+    </tr>`).join('') || '<tr><td colspan="4">No hay seguimientos pendientes.</td></tr>';
+}
+
+function renderFollowUps() {
+  $('followTable').innerHTML = followUps.map(item => `
+    <tr>
+      <td>${formatDate(item.date)}</td>
+      <td>${escapeHtml(item.teacher)}</td>
+      <td>${escapeHtml(item.result)}</td>
+      <td>${escapeHtml(item.comment)}</td>
+      <td>${escapeHtml(item.user)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">No hay seguimientos registrados.</td></tr>';
+}
+
+function renderProfessors() {
+  const counts = getTeacherCounts();
+  $('teachersTable').innerHTML = professors.map(item => {
+    const count = counts[item.name] || 0;
+    return `<tr><td>${escapeHtml(item.bannerId)}</td><td class="${count >= 3 ? 'teacher-alert' : ''}">${escapeHtml(item.name)}</td><td>${count}</td><td>${count >= 3 ? '<span class="badge alert">En alerta</span>' : '<span class="badge resolved">Normal</span>'}</td></tr>`;
+  }).join('') || '<tr><td colspan="4">No hay profesores registrados.</td></tr>';
+}
+
+function renderStudents() {
+  $('studentsTable').innerHTML = students.map(item => `<tr><td>${escapeHtml(item.matricula)}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.group)}</td><td>${escapeHtml(item.career || '-')}</td></tr>`).join('') || '<tr><td colspan="4">No hay alumnos registrados.</td></tr>';
+}
+
+function renderSubjects() {
+  $('subjectsTable').innerHTML = assignments.map(item => {
+    const subject = subjects.find(subjectItem => subjectItem.id === item.subjectId);
+    const teacher = professors.find(professorItem => professorItem.id === item.teacherId);
+    return `<tr><td>${escapeHtml(subject?.name || '-')}</td><td>${escapeHtml(item.group)}</td><td>${escapeHtml(teacher?.name || '-')}</td><td>${escapeHtml(item.schedule || '-')}</td></tr>`;
+  }).join('') || '<tr><td colspan="4">No hay asignaciones registradas.</td></tr>';
+}
+
+function populateLists() {
+  $('profesoresList').innerHTML = professors.map(item => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.bannerId)}</option>`).join('');
+
+  const filter = $('filterType');
+  const current = filter.value;
+  filter.innerHTML = '<option value="">Todas las incidencias</option>' + incidentTypes.map(item => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join('');
+  filter.value = current;
+}
+
+function countBy(field) {
+  return currentMonthIncidents().reduce((result, item) => {
+    const key = item[field] || 'Sin información';
+    result[key] = (result[key] || 0) + 1;
+    return result;
+  }, {});
+}
+
+function topKey(object) {
+  return Object.entries(object).sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+function renderChartSummaries() {
+  const monthData = currentMonthIncidents();
+  $('topType').textContent = topKey(countBy('type')) || '-';
+  $('topGroup').textContent = topKey(countBy('group')) || '-';
+  $('topTeacher').textContent = topKey(countBy('teacher')) || '-';
+  $('resolvedRate').textContent = monthData.length ? `${Math.round(monthData.filter(item => item.status === 'Resuelta').length / monthData.length * 100)}%` : '0%';
+}
+
+function renderCharts() {
+  Object.values(chartInstances).forEach(chart => chart.destroy());
+  chartInstances = {};
+  chartInstances.type = makeChart('typeChart', 'bar', countBy('type'), 'Incidencias');
+  chartInstances.teacher = makeChart('teacherChart', 'bar', countBy('teacher'), 'Incidencias');
+  chartInstances.group = makeChart('groupChart', 'bar', countBy('group'), 'Incidencias');
+  chartInstances.status = new Chart($('statusChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Pendiente', 'Resuelta'],
+      datasets: [{ data: [currentMonthIncidents().filter(item => item.status === 'Pendiente').length, currentMonthIncidents().filter(item => item.status === 'Resuelta').length] }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+function makeChart(id, type, object, label) {
+  return new Chart($(id), {
+    type,
+    data: { labels: Object.keys(object), datasets: [{ label, data: Object.values(object), borderRadius: 8 }] },
+    options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { display: false } } }
+  });
+}
+
+function updateIncidentTypeOptions(category) {
+  const options = incidentTypes.filter(item => item.category === category);
+  const select = $('tipo');
+  select.disabled = !options.length;
+  select.innerHTML = options.length
+    ? '<option value="">Selecciona una opción</option>' + options.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join('')
+    : '<option value="">No hay tipos registrados para esta categoría</option>';
+}
+
+function fillTeacherAssignments(professor) {
+  if (!professor) return;
+  $('profesorId').value = professor.bannerId;
+  const teacherAssignments = assignments.filter(item => item.teacherId === professor.id);
+  if (teacherAssignments.length === 1) {
+    const assignment = teacherAssignments[0];
+    $('materia').value = subjects.find(item => item.id === assignment.subjectId)?.name || '';
+    $('grupo').value = assignment.group || '';
+  }
+}
+
+async function registerIncident(event) {
+  event.preventDefault();
+  const teacher = professors.find(item => lower(item.name) === lower($('profesor').value));
+  const subject = subjects.find(item => lower(item.name) === lower($('materia').value));
+  const student = students.find(item => item.matricula === clean($('matricula').value));
+
+  if (!teacher) return showToast('Selecciona un profesor registrado.');
+  if (!subject) return showToast('La materia debe estar registrada en Supabase.');
+  if (!$('tipo').value) return showToast('Selecciona el tipo de incidencia.');
+
+  const payload = {
+    fecha: $('fecha').value,
+    hora: $('hora').value,
+    aula: clean($('aula').value) || null,
+    profesor_id: teacher.id,
+    materia_id: subject.id,
+    grupo: clean($('grupo').value),
+    tipo_incidencia_id: $('tipo').value,
+    involucrado: $('involucrado').value,
+    alumno_id: student?.id || null,
+    matricula_capturada: clean($('matricula').value) || null,
+    observaciones: clean($('descripcion').value),
+    estado: 'pendiente',
+    registrado_por: currentProfile.id
   };
 
-  let professors = [];
-  let students = [];
-  let subjects = [];
-  let incidents = [];
-  let followUps = [];
-  let chartInstances = {};
-  let realtimeChannel = null;
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  try {
+    const { error } = await db.from('incidencias').insert(payload);
+    if (error) throw error;
+    await writeLog('CREAR_INCIDENCIA', 'incidencias', null, payload);
+    event.target.reset();
+    $('fecha').value = today();
+    $('hora').value = nowTime();
+    updateIncidentTypeOptions('');
+    await loadData({ silent: true });
+    showToast('Incidencia guardada y sincronizada.');
+    showSection('incidencias');
+  } catch (error) {
+    console.error(error);
+    showToast(`No se pudo guardar: ${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
 
-  const incidentTypes = {
-    Operativa: [
-      'Profesor fuera del salón', 'Alumnos sentados en otro orden', 'Alumnos dormidos',
-      'Alumnos maquillándose', 'Alumnos sin playera', 'Alumnos y/o profesor comiendo',
-      'Profesor y/o alumnos en el celular', 'Alumnos fuera de clase', 'Guardia de receso',
-      'El profesor falta al respeto al alumno', 'Evaluación incorrecta al alumno',
-      'Queja de padre de familia o tutor', 'Acoso a alumnos', 'Otra incidencia operativa'
-    ],
-    Administrativa: [
-      'No entregó a tiempo disponibilidad horaria', 'Llegó tarde',
-      'Falta al trabajo sin justificante', 'No entregó dosificación a tiempo',
-      'Otra incidencia administrativa'
-    ]
+function openFollow(id) {
+  $('followIncidentId').value = id;
+  $('followModal').classList.add('show');
+}
+window.openFollow = openFollow;
+
+function closeModal() {
+  $('followModal').classList.remove('show');
+  $('followForm').reset();
+}
+window.closeModal = closeModal;
+
+async function saveFollowUp(event) {
+  event.preventDefault();
+  const incidentId = $('followIncidentId').value;
+  const result = $('followResult').value;
+  const resolved = ['Resuelta', 'Se dio seguimiento'].includes(result);
+
+  const payload = {
+    incidencia_id: incidentId,
+    resultado: result,
+    accion_realizada: clean($('followAction').value) || null,
+    comentario: clean($('followComment').value),
+    proxima_revision: $('followNext').value || null,
+    registrado_por: currentProfile.id
   };
 
-  const pageNames = {
-    dashboard: 'Dashboard', registro: 'Registrar incidencia', incidencias: 'Registro de incidencias',
-    seguimiento: 'Seguimiento', graficas: 'Gráficas', profesores: 'Profesores',
-    alumnos: 'Alumnos', materias: 'Materias y grupos', reportes: 'Reportes', usuarios: 'Usuarios'
+  try {
+    const { error } = await db.from('seguimientos').insert(payload);
+    if (error) throw error;
+
+    const { error: updateError } = await db
+      .from('incidencias')
+      .update({ estado: resolved ? 'resuelta' : 'pendiente' })
+      .eq('id', incidentId);
+    if (updateError) throw updateError;
+
+    await writeLog('CREAR_SEGUIMIENTO', 'seguimientos', incidentId, payload);
+    closeModal();
+    await loadData({ silent: true });
+    showToast('Seguimiento registrado y sincronizado.');
+  } catch (error) {
+    console.error(error);
+    showToast(`No se pudo registrar: ${error.message}`);
+  }
+}
+
+async function addProfessor(event) {
+  event.preventDefault();
+  if (!isAdmin()) return showToast('Solo el administrador puede agregar profesores.');
+  const payload = { id_banner: clean($('newTeacherId').value), nombre: clean($('newTeacherName').value), activo: true };
+  const { error } = await db.from('profesores').insert(payload);
+  if (error) return showToast(`No se pudo agregar: ${error.message}`);
+  event.target.reset();
+  await loadData({ silent: true });
+  showToast('Profesor agregado.');
+}
+
+async function addStudent(event) {
+  event.preventDefault();
+  if (!isAdmin()) return showToast('Solo el administrador puede agregar alumnos.');
+  const payload = {
+    matricula: clean($('newStudentMat').value),
+    nombre: clean($('newStudentName').value),
+    grupo: clean($('newStudentGroup').value),
+    carrera: clean($('newStudentCareer').value) || null,
+    activo: true
   };
+  const { error } = await db.from('alumnos').insert(payload);
+  if (error) return showToast(`No se pudo agregar: ${error.message}`);
+  event.target.reset();
+  await loadData({ silent: true });
+  showToast('Alumno agregado.');
+}
 
-  const $ = id => document.getElementById(id);
-  const val = id => ($(id)?.value || '').trim();
-  const escapeHtml = value => String(value ?? '')
-    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+async function addSubjectAssignment(event) {
+  event.preventDefault();
+  if (!isAdmin()) return showToast('Solo el administrador puede agregar materias.');
 
-  function normalizeProfessor(row) {
-    return {
-      id: String(row.id_banner ?? row.profesor_id ?? row.codigo ?? row.id ?? ''),
-      dbId: row.id,
-      name: row.nombre ?? row.name ?? row.profesor ?? ''
-    };
+  const teacher = professors.find(item => clean(item.bannerId) === clean($('subjectTeacherId').value));
+  if (!teacher) return showToast('No se encontró el ID del profesor.');
+
+  let subject = subjects.find(item => lower(item.name) === lower($('subjectName').value));
+  if (!subject) {
+    const { data, error } = await db.from('materias').insert({ nombre: clean($('subjectName').value), activo: true }).select('*').single();
+    if (error) return showToast(`No se pudo crear la materia: ${error.message}`);
+    subject = { id: data.id, name: data.nombre };
   }
 
-  function normalizeStudent(row) {
-    return {
-      dbId: row.id,
-      matricula: String(row.matricula ?? ''),
-      name: row.nombre ?? row.name ?? '',
-      group: row.grupo ?? row.group ?? '',
-      career: row.carrera ?? row.career ?? '',
-      shift: row.turno ?? row.shift ?? ''
-    };
+  const payload = {
+    profesor_id: teacher.id,
+    materia_id: subject.id,
+    grupo: clean($('subjectGroup').value),
+    horario: clean($('subjectSchedule').value) || null
+  };
+  const { error } = await db.from('asignaciones_docentes').insert(payload);
+  if (error) return showToast(`No se pudo guardar: ${error.message}`);
+  event.target.reset();
+  await loadData({ silent: true });
+  showToast('Asignación guardada.');
+}
+
+function normalizeHeader(value) {
+  return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+}
+
+function firstValue(row, aliases) {
+  const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizeHeader(key), value]));
+  for (const alias of aliases) {
+    const value = normalized[normalizeHeader(alias)];
+    if (value !== undefined && value !== null && clean(value)) return clean(value);
   }
+  return '';
+}
 
-  function normalizeSubject(row) {
-    return {
-      dbId: row.id,
-      subject: row.materia ?? row.nombre ?? row.subject ?? '',
-      group: row.grupo ?? row.group ?? '',
-      teacherId: String(row.profesor_id_banner ?? row.profesor_id ?? row.teacher_id ?? ''),
-      schedule: row.horario ?? row.schedule ?? ''
-    };
+async function importDatabaseFile(event, kind) {
+  if (!isAdmin()) {
+    event.target.value = '';
+    return showToast('Solo el administrador puede importar bases.');
   }
+  const file = event.target.files[0];
+  if (!file) return;
+  const infoId = kind === 'teachers' ? 'teacherUploadInfo' : 'studentUploadInfo';
 
-  function normalizeIncident(row) {
-    return {
-      id: row.id,
-      date: row.fecha ?? '',
-      time: String(row.hora ?? '').slice(0, 5),
-      classroom: row.aula ?? '',
-      teacherId: String(row.profesor_id_banner ?? row.profesor_id ?? ''),
-      teacher: row.profesor_nombre ?? row.profesor ?? '',
-      subject: row.materia ?? '',
-      group: row.grupo ?? '',
-      student: row.alumno_nombre ?? row.alumno ?? '',
-      matricula: String(row.matricula ?? ''),
-      type: row.tipo_incidencia ?? row.tipo ?? '',
-      involved: row.involucrado ?? '',
-      category: row.categoria ?? 'Operativa',
-      status: row.estatus ?? row.status ?? 'Pendiente',
-      description: row.descripcion ?? '',
-      registeredBy: row.usuario_registro ?? row.registrado_por ?? '',
-      createdAt: row.created_at ?? ''
-    };
-  }
+  try {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: false });
+    if (!rows.length) throw new Error('El archivo no contiene registros.');
 
-  function normalizeFollowUp(row) {
-    const incident = incidents.find(i => String(i.id) === String(row.incidencia_id));
-    return {
-      id: row.id,
-      incidentId: row.incidencia_id,
-      date: row.fecha ?? String(row.created_at || '').slice(0, 10),
-      teacher: row.profesor_nombre ?? incident?.teacher ?? '',
-      result: row.resultado ?? row.estatus ?? '',
-      action: row.accion ?? '',
-      comment: row.comentario ?? '',
-      nextReview: row.proxima_revision ?? '',
-      user: row.usuario_nombre ?? row.usuario ?? ''
-    };
-  }
-
-  async function fetchTable(table, orderColumn = 'id') {
-    const { data, error } = await db.from(table).select('*').order(orderColumn, { ascending: true });
-    if (error) throw new Error(`${table}: ${error.message}`);
-    return data || [];
-  }
-
-  async function loadAll(showMessage = false) {
-    setLoading(true);
-    try {
-      const [profData, studentData, subjectData, incidentData] = await Promise.all([
-        fetchTable('profesores'), fetchTable('alumnos'), fetchTable('materias'),
-        db.from('incidencias').select('*').order('created_at', { ascending: true })
-      ]);
-
-      if (incidentData.error) throw new Error(`incidencias: ${incidentData.error.message}`);
-      professors = profData.map(normalizeProfessor);
-      students = studentData.map(normalizeStudent);
-      subjects = subjectData.map(normalizeSubject);
-      incidents = (incidentData.data || []).map(normalizeIncident);
-
-      const followResult = await db.from('seguimientos').select('*').order('created_at', { ascending: true });
-      if (followResult.error) throw new Error(`seguimientos: ${followResult.error.message}`);
-      followUps = (followResult.data || []).map(normalizeFollowUp);
-
-      renderAll();
-      if (showMessage) showToast('Información actualizada');
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || 'No se pudo cargar la información');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function setLoading(loading) {
-    document.body.classList.toggle('loading', loading);
-  }
-
-  function showSection(id) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.nav-button').forEach(b => b.classList.toggle('active', b.dataset.section === id));
-    $(id)?.classList.add('active');
-    if ($('pageTitle')) $('pageTitle').textContent = pageNames[id] || id;
-    if (id === 'graficas') setTimeout(renderCharts, 50);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-  window.showSection = showSection;
-
-  function currentMonthIncidents() {
-    const month = new Date().toISOString().slice(0, 7);
-    return incidents.filter(i => String(i.date).startsWith(month));
-  }
-
-  function getTeacherCounts() {
-    return currentMonthIncidents().reduce((acc, item) => {
-      const key = item.teacher || 'Sin profesor';
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-  }
-
-  function renderAll() {
-    const monthData = currentMonthIncidents();
-    const counts = getTeacherCounts();
-    const pending = incidents.filter(i => i.status !== 'Resuelta');
-    const resolved = incidents.filter(i => i.status === 'Resuelta');
-    const alertTeachers = Object.entries(counts).filter(([, count]) => count >= 3);
-
-    $('heroMonthTotal').textContent = monthData.length;
-    $('metricMonth').textContent = monthData.length;
-    $('metricAlerts').textContent = alertTeachers.length;
-    $('metricPending').textContent = pending.length;
-    $('metricResolved').textContent = resolved.length;
-    $('sumPending').textContent = pending.length;
-    $('sumResolved').textContent = resolved.length;
-    $('sumAdministrative').textContent = incidents.filter(i => i.category === 'Administrativa').length;
-    $('sumTotal').textContent = incidents.length;
-
-    $('dashboardTable').innerHTML = [...incidents].reverse().slice(0, 5).map(i => `
-      <tr><td>${formatDate(i.date)}</td><td class="${counts[i.teacher] >= 3 ? 'teacher-alert' : ''}">${escapeHtml(i.teacher)}</td>
-      <td>${escapeHtml(i.group)}</td><td>${escapeHtml(i.type)}</td><td>${statusBadge(i.status)}</td></tr>`
-    ).join('') || '<tr><td colspan="5">No hay incidencias registradas.</td></tr>';
-
-    $('alertsContainer').innerHTML = alertTeachers.length
-      ? alertTeachers.map(([teacher, count]) => `<div class="alert-box"><div>⚠</div><div><strong>${escapeHtml(teacher)}</strong>Ha acumulado ${count} incidencias durante el mes actual.</div></div>`).join('')
-      : '<p class="help">No hay profesores en nivel de alerta.</p>';
-
-    renderIncidents();
-    renderPending();
-    renderFollowUps();
-    renderProfessors();
-    renderStudents();
-    renderSubjects();
-    populateLists();
-    renderChartSummaries();
-  }
-
-  function renderIncidents() {
-    const teacher = val('filterTeacher').toLowerCase();
-    const group = val('filterGroup').toLowerCase();
-    const category = val('filterCategory');
-    const type = val('filterType');
-    const status = val('filterStatus');
-    const month = val('filterDate');
-    const counts = getTeacherCounts();
-
-    const data = incidents.filter(i =>
-      i.teacher.toLowerCase().includes(teacher) && i.group.toLowerCase().includes(group) &&
-      (!category || i.category === category) && (!type || i.type === type) &&
-      (!status || i.status === status) && (!month || i.date.startsWith(month))
-    );
-
-    $('incidentsTable').innerHTML = [...data].reverse().map(i => `
-      <tr>
-        <td>${formatDate(i.date)}</td><td>${escapeHtml(i.time)}</td>
-        <td class="${counts[i.teacher] >= 3 ? 'teacher-alert' : ''}">${escapeHtml(i.teacher)}${counts[i.teacher] >= 3 ? ' ⚠' : ''}</td>
-        <td>${escapeHtml(i.subject)}</td><td>${escapeHtml(i.group)}</td>
-        <td>${i.student ? `${escapeHtml(i.student)}<br><small>${escapeHtml(i.matricula)}</small>` : 'No aplica'}</td>
-        <td><span class="badge info">${escapeHtml(i.category)}</span></td><td title="${escapeHtml(i.description)}">${escapeHtml(i.type)}</td>
-        <td>${statusBadge(i.status)}</td>
-        <td><div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" onclick="openFollow('${i.id}')">Seguimiento</button>
-          ${currentUser.role === 'admin' ? `<button class="btn btn-danger btn-sm" onclick="deleteIncident('${i.id}')">Borrar</button>` : ''}
-        </div></td>
-      </tr>`).join('') || '<tr><td colspan="10">No se encontraron resultados.</td></tr>';
-  }
-
-  function renderPending() {
-    $('pendingTable').innerHTML = incidents.filter(i => i.status !== 'Resuelta').reverse().map(i => `
-      <tr><td>${formatDate(i.date)}</td><td>${escapeHtml(i.teacher)}</td><td>${escapeHtml(i.type)}</td>
-      <td><button class="btn btn-warning btn-sm" onclick="openFollow('${i.id}')">Atender</button></td></tr>`
-    ).join('') || '<tr><td colspan="4">No hay seguimientos pendientes.</td></tr>';
-  }
-
-  function renderFollowUps() {
-    $('followTable').innerHTML = [...followUps].reverse().map(f => `
-      <tr><td>${formatDate(f.date)}</td><td>${escapeHtml(f.teacher)}</td><td>${escapeHtml(f.result)}</td>
-      <td>${escapeHtml(f.comment)}</td><td>${escapeHtml(f.user)}</td></tr>`
-    ).join('') || '<tr><td colspan="5">No hay seguimientos registrados.</td></tr>';
-  }
-
-  function renderProfessors() {
-    const counts = getTeacherCounts();
-    $('teachersTable').innerHTML = professors.map(p => {
-      const count = counts[p.name] || 0;
-      return `<tr><td>${escapeHtml(p.id)}</td><td class="${count >= 3 ? 'teacher-alert' : ''}">${escapeHtml(p.name)}</td>
-      <td>${count}</td><td>${count >= 3 ? '<span class="badge alert">En alerta</span>' : '<span class="badge resolved">Normal</span>'}</td></tr>`;
-    }).join('') || '<tr><td colspan="4">No hay profesores registrados.</td></tr>';
-  }
-
-  function renderStudents() {
-    $('studentsTable').innerHTML = students.map(s => `<tr><td>${escapeHtml(s.matricula)}</td><td>${escapeHtml(s.name)}</td>
-      <td>${escapeHtml(s.group)}</td><td>${escapeHtml(s.career || '-')}</td></tr>`).join('') || '<tr><td colspan="4">No hay alumnos registrados.</td></tr>';
-  }
-
-  function renderSubjects() {
-    $('subjectsTable').innerHTML = subjects.map(s => {
-      const teacher = professors.find(p => p.id === s.teacherId)?.name || s.teacherId;
-      return `<tr><td>${escapeHtml(s.subject)}</td><td>${escapeHtml(s.group)}</td><td>${escapeHtml(teacher)}</td><td>${escapeHtml(s.schedule || '-')}</td></tr>`;
-    }).join('') || '<tr><td colspan="4">No hay materias registradas.</td></tr>';
-  }
-
-  function populateLists() {
-    $('profesoresList').innerHTML = professors.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.id)}</option>`).join('');
-    const types = [...new Set(incidents.map(i => i.type).filter(Boolean))];
-    const select = $('filterType');
-    const current = select.value;
-    select.innerHTML = '<option value="">Todas las incidencias</option>' + types.map(t => `<option>${escapeHtml(t)}</option>`).join('');
-    select.value = current;
-  }
-
-  function countBy(field) {
-    return incidents.reduce((acc, i) => {
-      const key = i[field] || 'Sin dato';
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {});
-  }
-
-  function topKey(obj) {
-    return Object.entries(obj).sort((a, b) => b[1] - a[1])[0]?.[0];
-  }
-
-  function renderChartSummaries() {
-    $('topType').textContent = topKey(countBy('type')) || '-';
-    $('topGroup').textContent = topKey(countBy('group')) || '-';
-    $('topTeacher').textContent = topKey(countBy('teacher')) || '-';
-    $('resolvedRate').textContent = incidents.length
-      ? Math.round(incidents.filter(i => i.status === 'Resuelta').length / incidents.length * 100) + '%'
-      : '0%';
-  }
-
-  function renderCharts() {
-    if (!window.Chart) return;
-    Object.values(chartInstances).forEach(c => c?.destroy());
-    chartInstances = {};
-    chartInstances.type = makeChart('typeChart', 'bar', countBy('type'), 'Incidencias');
-    chartInstances.teacher = makeChart('teacherChart', 'bar', countBy('teacher'), 'Incidencias');
-    chartInstances.group = makeChart('groupChart', 'bar', countBy('group'), 'Incidencias');
-    chartInstances.status = new Chart($('statusChart'), {
-      type: 'doughnut',
-      data: { labels: ['Pendiente', 'Resuelta'], datasets: [{ data: [incidents.filter(i => i.status !== 'Resuelta').length, incidents.filter(i => i.status === 'Resuelta').length] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-  }
-
-  function makeChart(id, type, obj, label) {
-    return new Chart($(id), {
-      type,
-      data: { labels: Object.keys(obj), datasets: [{ label, data: Object.values(obj), borderRadius: 8 }] },
-      options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { display: false } } }
-    });
-  }
-
-  async function saveIncident(event) {
-    event.preventDefault();
-    const teacher = val('profesor');
-    const professor = professors.find(p => p.name.toLowerCase() === teacher.toLowerCase());
-    const payload = {
-      fecha: val('fecha'), hora: val('hora'), aula: val('aula') || null,
-      profesor_id_banner: val('profesorId') || professor?.id || null,
-      profesor_nombre: teacher, materia: val('materia'), grupo: val('grupo'),
-      categoria: val('categoria'), tipo_incidencia: val('tipo'), involucrado: val('involucrado'),
-      matricula: val('matricula') || null, alumno_nombre: val('alumno') || null,
-      descripcion: val('descripcion'), estatus: 'Pendiente',
-      usuario_registro: currentUser.name, usuario_id: currentUser.id
-    };
-
-    try {
-      const { error } = await db.from('incidencias').insert(payload);
+    if (kind === 'teachers') {
+      const payload = rows.map(row => ({
+        id_banner: firstValue(row, ['ID Banner', 'id', 'clave']),
+        nombre: firstValue(row, ['nombre', 'nombre profesor', 'profesor', 'docente', 'nombre completo']),
+        activo: true
+      })).filter(item => item.id_banner && item.nombre);
+      if (!payload.length) throw new Error('Se requieren las columnas ID Banner y Nombre.');
+      const { error } = await db.from('profesores').upsert(payload, { onConflict: 'id_banner' });
       if (error) throw error;
-      event.target.reset();
-      $('fecha').valueAsDate = new Date();
-      $('hora').value = new Date().toTimeString().slice(0, 5);
-      showToast('Incidencia guardada en Supabase');
-      showSection('incidencias');
-      await loadAll();
-    } catch (error) {
-      console.error(error);
-      showToast(`No se pudo guardar: ${error.message}`);
-    }
-  }
-
-  function openFollow(id) {
-    $('followIncidentId').value = id;
-    $('followModal').classList.add('show');
-  }
-  window.openFollow = openFollow;
-
-  function closeModal() {
-    $('followModal').classList.remove('show');
-    $('followForm').reset();
-  }
-  window.closeModal = closeModal;
-
-  async function saveFollowUp(event) {
-    event.preventDefault();
-    const id = $('followIncidentId').value;
-    const incident = incidents.find(i => String(i.id) === String(id));
-    if (!incident) return showToast('No se encontró la incidencia');
-
-    const result = val('followResult');
-    const status = result === 'Resuelta' || result === 'Se dio seguimiento' ? 'Resuelta' : 'Pendiente';
-    try {
-      const { error: followError } = await db.from('seguimientos').insert({
-        incidencia_id: incident.id,
-        fecha: new Date().toISOString().slice(0, 10),
-        profesor_nombre: incident.teacher,
-        resultado: result,
-        accion: val('followAction') || null,
-        comentario: val('followComment'),
-        proxima_revision: val('followNext') || null,
-        usuario_id: currentUser.id,
-        usuario_nombre: currentUser.name
-      });
-      if (followError) throw followError;
-
-      const { error: incidentError } = await db.from('incidencias').update({ estatus: status }).eq('id', incident.id);
-      if (incidentError) throw incidentError;
-
-      closeModal();
-      showToast('Seguimiento guardado');
-      await loadAll();
-    } catch (error) {
-      console.error(error);
-      showToast(`No se pudo guardar: ${error.message}`);
-    }
-  }
-
-  async function addProfessor(event) {
-    event.preventDefault();
-    try {
-      const { error } = await db.from('profesores').insert({ id_banner: val('newTeacherId'), nombre: val('newTeacherName') });
+      $(infoId).textContent = `${payload.length} profesores importados desde ${file.name}.`;
+    } else {
+      const payload = rows.map(row => ({
+        matricula: firstValue(row, ['matricula', 'matrícula', 'id alumno', 'numero cuenta']),
+        nombre: firstValue(row, ['nombre', 'nombre alumno', 'alumno', 'nombre completo']),
+        grupo: firstValue(row, ['grupo', 'grado y grupo']),
+        carrera: firstValue(row, ['carrera', 'programa', 'licenciatura']) || null,
+        turno: firstValue(row, ['turno']) || null,
+        activo: true
+      })).filter(item => item.matricula && item.nombre);
+      if (!payload.length) throw new Error('Se requieren las columnas Matrícula y Nombre.');
+      const { error } = await db.from('alumnos').upsert(payload, { onConflict: 'matricula' });
       if (error) throw error;
-      event.target.reset();
-      showToast('Profesor agregado');
-      await loadAll();
-    } catch (error) { showToast(`No se pudo agregar: ${error.message}`); }
-  }
-
-  async function addStudent(event) {
-    event.preventDefault();
-    try {
-      const { error } = await db.from('alumnos').insert({
-        matricula: val('newStudentMat'), nombre: val('newStudentName'), grupo: val('newStudentGroup'), carrera: val('newStudentCareer') || null
-      });
-      if (error) throw error;
-      event.target.reset();
-      showToast('Alumno agregado');
-      await loadAll();
-    } catch (error) { showToast(`No se pudo agregar: ${error.message}`); }
-  }
-
-  async function addSubject(event) {
-    event.preventDefault();
-    try {
-      const { error } = await db.from('materias').insert({
-        materia: val('subjectName'), grupo: val('subjectGroup'), profesor_id_banner: val('subjectTeacherId'), horario: val('subjectSchedule') || null
-      });
-      if (error) throw error;
-      event.target.reset();
-      showToast('Asignación guardada');
-      await loadAll();
-    } catch (error) { showToast(`No se pudo guardar: ${error.message}`); }
-  }
-
-  async function deleteIncident(id) {
-    if (currentUser.role !== 'admin') return showToast('Solo el administrador puede borrar incidencias');
-    const incident = incidents.find(i => String(i.id) === String(id));
-    if (!incident || !confirm(`¿Deseas borrar la incidencia de ${incident.teacher}?`)) return;
-    try {
-      const { error } = await db.from('incidencias').delete().eq('id', id);
-      if (error) throw error;
-      showToast('Incidencia borrada');
-      await loadAll();
-    } catch (error) { showToast(`No se pudo borrar: ${error.message}`); }
-  }
-  window.deleteIncident = deleteIncident;
-
-  function normalizeHeader(value) {
-    return String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-  }
-
-  function firstValue(row, aliases) {
-    const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizeHeader(key), value]));
-    for (const alias of aliases) {
-      const value = normalized[normalizeHeader(alias)];
-      if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+      $(infoId).textContent = `${payload.length} alumnos importados desde ${file.name}.`;
     }
-    return '';
-  }
 
-  async function importDatabaseFile(event, kind) {
-    if (currentUser.role !== 'admin') {
-      event.target.value = '';
-      return showToast('Solo el administrador puede importar bases');
+    await loadData({ silent: true });
+    showToast('Importación terminada.');
+  } catch (error) {
+    console.error(error);
+    $(infoId).textContent = `No se pudo importar ${file.name}: ${error.message}`;
+    showToast('No se pudo importar el archivo.');
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function deleteIncident(id) {
+  if (!isAdmin()) return showToast('Solo el administrador puede borrar incidencias.');
+  const incident = incidents.find(item => String(item.id) === String(id));
+  if (!incident || !confirm(`¿Deseas borrar la incidencia de ${incident.teacher}?`)) return;
+  const { error } = await db.from('incidencias').delete().eq('id', id);
+  if (error) return showToast(`No se pudo borrar: ${error.message}`);
+  await writeLog('ELIMINAR_INCIDENCIA', 'incidencias', id, incident.raw);
+  await loadData({ silent: true });
+  showToast('Incidencia eliminada.');
+}
+window.deleteIncident = deleteIncident;
+
+async function writeLog(action, tableName, recordId, details) {
+  try {
+    await db.from('bitacora').insert({
+      usuario_id: currentProfile.id,
+      accion: action,
+      tabla_afectada: tableName,
+      registro_id: recordId,
+      detalles: details
+    });
+  } catch (error) {
+    console.warn('No se pudo escribir en bitácora:', error.message);
+  }
+}
+
+function applyPermissions() {
+  const admin = isAdmin();
+  $('currentUserName').textContent = currentProfile.nombre;
+  $('currentUserRole').textContent = `${admin ? 'Administrador' : 'Operativo'} · Plantel UTC`;
+  $('currentUserAvatar').textContent = initials(currentProfile.nombre);
+  if ($('sessionInfo')) $('sessionInfo').value = `${currentProfile.nombre} — ${admin ? 'Administrador' : 'Operativo'}`;
+  document.querySelectorAll('.admin-only').forEach(element => element.classList.toggle('hidden', !admin));
+
+  ['teacherForm', 'studentForm', 'subjectForm'].forEach(id => {
+    const form = $(id);
+    if (form) form.querySelectorAll('input,select,button').forEach(control => control.disabled = !admin);
+  });
+  ['teacherFile', 'studentFile'].forEach(id => { if ($(id)) $(id).disabled = !admin; });
+}
+
+function subscribeRealtime() {
+  if (realtimeChannel) db.removeChannel(realtimeChannel);
+  realtimeChannel = db.channel('utc-incidencias-tiempo-real');
+
+  ['incidencias', 'seguimientos', 'profesores', 'alumnos', 'materias', 'asignaciones_docentes', 'tipos_incidencia'].forEach(table => {
+    realtimeChannel.on('postgres_changes', { event: '*', schema: 'public', table }, payload => {
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(async () => {
+        try {
+          await loadData({ silent: true });
+          const messages = {
+            INSERT: `Nuevo registro en ${table}`,
+            UPDATE: `Información actualizada en ${table}`,
+            DELETE: `Registro eliminado de ${table}`
+          };
+          showToast(`${messages[payload.eventType] || 'Cambio recibido'} · tiempo real`);
+        } catch (error) {
+          console.error('Error al refrescar Realtime:', error);
+        }
+      }, 250);
+    });
+  });
+
+  realtimeChannel.subscribe(status => {
+    if (status === 'SUBSCRIBED') console.info('Supabase Realtime conectado.');
+  });
+}
+
+function exportCSV() {
+  if (!isAdmin()) return showToast('Solo el administrador puede descargar reportes.');
+  const headers = ['Fecha', 'Hora', 'ID profesor', 'Profesor', 'Materia', 'Grupo', 'Matrícula', 'Alumno', 'Categoría', 'Incidencia', 'Estatus', 'Descripción'];
+  const rows = incidents.map(item => [item.date, item.time, item.teacherId, item.teacher, item.subject, item.group, item.matricula, item.student, item.category, item.type, item.status, item.description]);
+  const csv = [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = 'reporte_incidencias_utc.csv';
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
+window.exportCSV = exportCSV;
+window.fakeExport = name => showToast(`${name}: usa el reporte CSV general.`);
+
+function attachEvents() {
+  document.querySelectorAll('.nav-button').forEach(button => button.addEventListener('click', () => showSection(button.dataset.section)));
+  $('incidentForm').addEventListener('submit', registerIncident);
+  $('followForm').addEventListener('submit', saveFollowUp);
+  $('teacherForm').addEventListener('submit', addProfessor);
+  $('studentForm').addEventListener('submit', addStudent);
+  $('subjectForm').addEventListener('submit', addSubjectAssignment);
+  $('teacherFile').addEventListener('change', event => importDatabaseFile(event, 'teachers'));
+  $('studentFile').addEventListener('change', event => importDatabaseFile(event, 'students'));
+
+  $('categoria').addEventListener('change', event => updateIncidentTypeOptions(event.target.value));
+  $('profesor').addEventListener('change', event => fillTeacherAssignments(professors.find(item => lower(item.name) === lower(event.target.value))));
+  $('matricula').addEventListener('change', event => {
+    const student = students.find(item => item.matricula === clean(event.target.value));
+    if (student) {
+      $('alumno').value = student.name;
+      $('grupo').value = student.group;
     }
-    const file = event.target.files[0];
-    if (!file) return;
-    const infoId = kind === 'teachers' ? 'teacherUploadInfo' : 'studentUploadInfo';
-    try {
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: false });
-      if (!rows.length) throw new Error('El archivo está vacío.');
+  });
 
-      if (kind === 'teachers') {
-        const records = rows.map(row => ({
-          id_banner: firstValue(row, ['ID Banner', 'id', 'codigo']),
-          nombre: firstValue(row, ['nombre', 'nombre profesor', 'profesor', 'docente', 'nombre completo'])
-        })).filter(x => x.id_banner && x.nombre);
-        if (!records.length) throw new Error('Se necesitan las columnas ID Banner y Nombre.');
-        const { error } = await db.from('profesores').upsert(records, { onConflict: 'id_banner' });
-        if (error) throw error;
-        $(infoId).textContent = `${records.length} profesores importados desde ${file.name}.`;
-      } else {
-        const records = rows.map(row => ({
-          matricula: firstValue(row, ['matricula', 'matrícula', 'id alumno', 'numero cuenta']),
-          nombre: firstValue(row, ['nombre', 'nombre alumno', 'alumno', 'nombre completo']),
-          grupo: firstValue(row, ['grupo', 'grado y grupo']),
-          carrera: firstValue(row, ['carrera', 'programa', 'licenciatura']) || null,
-          turno: firstValue(row, ['turno']) || null
-        })).filter(x => x.matricula && x.nombre);
-        if (!records.length) throw new Error('Se necesitan las columnas Matrícula y Nombre.');
-        const { error } = await db.from('alumnos').upsert(records, { onConflict: 'matricula' });
-        if (error) throw error;
-        $(infoId).textContent = `${records.length} alumnos importados desde ${file.name}.`;
-      }
-      showToast('Importación terminada');
-      await loadAll();
-    } catch (error) {
-      console.error(error);
-      $(infoId).textContent = `No se pudo importar: ${error.message}`;
-      showToast('No se pudo importar el archivo');
-    } finally {
-      event.target.value = '';
-    }
-  }
+  ['filterTeacher', 'filterGroup', 'filterCategory', 'filterType', 'filterStatus', 'filterDate'].forEach(id => $(id).addEventListener('input', renderIncidents));
+  $('logoutButton').addEventListener('click', async () => {
+    if (realtimeChannel) await db.removeChannel(realtimeChannel);
+    await db.auth.signOut();
+    window.location.href = 'login.html';
+  });
 
-  function applyPermissions() {
-    const isAdmin = currentUser.role === 'admin' || currentUser.role === 'administrador';
-    $('currentUserName').textContent = currentUser.name;
-    $('currentUserRole').textContent = `${isAdmin ? 'Administrador' : 'Operativo'} · Plantel UTC`;
-    $('currentUserAvatar').textContent = currentUser.initials;
-    if ($('sessionInfo')) $('sessionInfo').value = `${currentUser.name} — ${isAdmin ? 'Administrador' : 'Operativo'}`;
-    document.querySelectorAll('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin));
-    document.querySelector('[data-section="reportes"]')?.classList.toggle('hidden', !isAdmin);
-  }
+  window.addEventListener('beforeunload', () => {
+    if (realtimeChannel) db.removeChannel(realtimeChannel);
+  });
+}
 
-  function statusBadge(status) {
-    return status === 'Resuelta' ? '<span class="badge resolved">Resuelta</span>' : '<span class="badge pending">Pendiente</span>';
-  }
-
-  function formatDate(date) {
-    if (!date) return '-';
-    return new Date(`${date}T00:00:00`).toLocaleDateString('es-MX');
-  }
-
-  function showToast(message) {
-    const toast = $('toast');
-    toast.textContent = message;
-    toast.classList.add('show');
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => toast.classList.remove('show'), 2600);
-  }
-
-  function exportCSV() {
-    if (currentUser.role !== 'admin' && currentUser.role !== 'administrador') return showToast('Solo el administrador puede descargar reportes');
-    const headers = ['Fecha', 'Hora', 'ID Profesor', 'Profesor', 'Materia', 'Grupo', 'Matrícula', 'Alumno', 'Categoría', 'Incidencia', 'Estatus', 'Descripción', 'Registró'];
-    const rows = incidents.map(i => [i.date, i.time, i.teacherId, i.teacher, i.subject, i.group, i.matricula, i.student, i.category, i.type, i.status, i.description, i.registeredBy]);
-    const csv = [headers, ...rows].map(row => row.map(v => `"${String(v ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'reporte_incidencias_utc.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-  window.exportCSV = exportCSV;
-  window.fakeExport = name => showToast(`${name}: usa el reporte CSV general por el momento`);
-
-  function subscribeRealtime() {
-    realtimeChannel = db.channel('utc-incidencias-tiempo-real')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidencias' }, () => loadAll())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'seguimientos' }, () => loadAll())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profesores' }, () => loadAll())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'alumnos' }, () => loadAll())
-      .subscribe();
-  }
-
-  function bindEvents() {
-    document.querySelectorAll('.nav-button').forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.section)));
-    $('incidentForm').addEventListener('submit', saveIncident);
-    $('followForm').addEventListener('submit', saveFollowUp);
-    $('teacherForm').addEventListener('submit', addProfessor);
-    $('studentForm').addEventListener('submit', addStudent);
-    $('subjectForm').addEventListener('submit', addSubject);
-    $('teacherFile').addEventListener('change', e => importDatabaseFile(e, 'teachers'));
-    $('studentFile').addEventListener('change', e => importDatabaseFile(e, 'students'));
-
-    $('categoria').addEventListener('change', e => {
-      const options = incidentTypes[e.target.value] || [];
-      $('tipo').disabled = !options.length;
-      $('tipo').innerHTML = options.length
-        ? '<option value="">Selecciona una opción</option>' + options.map(item => `<option>${escapeHtml(item)}</option>`).join('')
-        : '<option value="">Primero selecciona una categoría</option>';
-    });
-
-    $('profesor').addEventListener('change', e => {
-      const p = professors.find(x => x.name.toLowerCase() === e.target.value.toLowerCase());
-      if (p) $('profesorId').value = p.id;
-    });
-
-    $('matricula').addEventListener('change', e => {
-      const s = students.find(x => x.matricula === e.target.value.trim());
-      if (s) { $('alumno').value = s.name; $('grupo').value = s.group; }
-    });
-
-    ['filterTeacher', 'filterGroup', 'filterCategory', 'filterType', 'filterStatus', 'filterDate']
-      .forEach(id => $(id).addEventListener('input', renderIncidents));
-
-    $('logoutButton').addEventListener('click', () => {
-      if (realtimeChannel) db.removeChannel(realtimeChannel);
-      localStorage.removeItem('utc_docentes_session');
-      window.location.href = 'login.html';
-    });
-  }
-
-  async function init() {
-    $('currentDate').textContent = new Intl.DateTimeFormat('es-MX', { dateStyle: 'full' }).format(new Date());
-    $('fecha').valueAsDate = new Date();
-    $('hora').value = new Date().toTimeString().slice(0, 5);
+async function startApp() {
+  try {
+    await requireSession();
+    attachEvents();
     applyPermissions();
-    bindEvents();
-    await loadAll();
+    $('currentDate').textContent = new Intl.DateTimeFormat('es-MX', { dateStyle: 'full' }).format(new Date());
+    $('fecha').value = today();
+    $('hora').value = nowTime();
+    await loadData({ silent: true });
     subscribeRealtime();
+  } catch (error) {
+    console.error(error);
+    showToast(`Error al iniciar: ${error.message}`);
   }
+}
 
-  init();
-})();
+startApp();
